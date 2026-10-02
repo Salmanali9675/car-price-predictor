@@ -1,13 +1,18 @@
 """
 Professional PakWheels-Style Used Car Valuation Engine
-Covers 9 Top Pakistani Automotive Brands, 31 Popular Models, and Professional Market Parameters (Condition, City, Assembly).
+Frontend Web Interface built with Streamlit.
+Powered by modular evaluator engine from src/car_evaluator.py
 """
 
 import streamlit as st
-import pandas as pd
-import numpy as np
-import joblib
 import os
+import sys
+
+# Add project root to sys.path
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(BASE_DIR)
+
+from src.car_evaluator import CarEvaluator
 
 st.set_page_config(
     page_title="PakWheels Pro Car Price Valuation",
@@ -38,39 +43,16 @@ st.markdown("""
         margin: 15px 0;
         text-align: center;
     }
-    .badge-premium {
-        background-color: #10B981;
-        color: white;
-        padding: 4px 10px;
-        border-radius: 6px;
-        font-weight: 600;
-        font-size: 0.85rem;
-    }
-    .metric-card {
-        background: #F8FAFC;
-        padding: 15px;
-        border-radius: 10px;
-        border-left: 4px solid #B91C1C;
-        margin-bottom: 10px;
-    }
 </style>
 """, unsafe_allow_html=True)
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(BASE_DIR, 'model', 'car_price_model.joblib')
-COLUMNS_PATH = os.path.join(BASE_DIR, 'model', 'feature_columns.joblib')
-
 @st.cache_resource
-def load_engine():
-    if os.path.exists(MODEL_PATH) and os.path.exists(COLUMNS_PATH):
-        model = joblib.load(MODEL_PATH)
-        columns = joblib.load(COLUMNS_PATH)
-        return model, columns
-    return None, None
+def get_evaluator():
+    return CarEvaluator()
 
-model, feature_columns = load_engine()
+evaluator = get_evaluator()
 
-# Expanded 9 Brands and 31 Models Catalog
+# 9 Brands and 31 Models Catalog
 CAR_CATALOG = {
     "Toyota": {
         "Corolla Altis": {"cc": 1600, "transmissions": ["Automatic", "Manual"], "fuel": "Petrol", "assembly": "Local"},
@@ -167,69 +149,39 @@ with col_output:
     st.subheader("3. Professional Valuation Report")
     
     if btn_calc:
-        # Construct input payload matching the 50 dummy features
-        input_data = {col: [0] for col in feature_columns}
-        input_df = pd.DataFrame(input_data)
+        payload = {
+            'brand': selected_brand,
+            'model_name': selected_model,
+            'model_year': model_year,
+            'engine_cc': engine_cc,
+            'transmission': transmission,
+            'fuel_type': fuel_type,
+            'assembly': assembly,
+            'registered_city': reg_city,
+            'body_condition': body_condition,
+            'mileage_km': mileage_km
+        }
 
-        # Set numericals
-        input_df['model_year'] = [model_year]
-        input_df['engine_cc'] = [engine_cc]
-        input_df['mileage_km'] = [mileage_km]
-
-        # Set One-Hot switches
-        for col_name, val in [
-            (f"brand_{selected_brand}", 1),
-            (f"model_name_{selected_model}", 1),
-            (f"transmission_{transmission}", 1),
-            (f"fuel_type_{fuel_type}", 1),
-            (f"assembly_{assembly}", 1),
-            (f"registered_city_{reg_city}", 1),
-            (f"body_condition_{body_condition}", 1)
-        ]:
-            if col_name in input_df.columns:
-                input_df[col_name] = [val]
-
-        # Inference
-        pred_price = float(model.predict(input_df)[0])
-        lakhs = pred_price / 100000.0
-        crores = pred_price / 10000000.0
-
-        # Ranges
-        low_range = round(pred_price * 0.96, -4)
-        high_range = round(pred_price * 1.04, -4)
-        dealer_cash = round(pred_price * 0.92, -4)
-
-        # Inspection score out of 10
-        score = 9.8
-        if body_condition == "Minor Touchups":
-            score -= 1.2
-        elif body_condition == "Accidental / Repainted":
-            score -= 3.0
-        age = 2024 - model_year
-        score -= min(age * 0.2, 2.0)
-        score = max(round(score, 1), 3.5)
-
-        # Display Valuation Card
-        price_display = f"{crores:.2f} Crore PKR" if crores >= 1.0 else f"{lakhs:.2f} Lakh PKR"
+        res = evaluator.evaluate(payload)
 
         st.markdown(f"""
         <div class="valuation-box">
             <div style="font-size: 0.9rem; letter-spacing: 2px; color: #94A3B8;">ESTIMATED PAKWHEELS MARKET VALUE</div>
             <div style="font-size: 2.6rem; font-weight: 800; color: #FBBF24; margin: 15px 0;">
-                Rs. {pred_price:,.0f}
+                Rs. {res['predicted_price']:,.0f}
             </div>
             <div style="font-size: 1.2rem; font-weight: 700; color: #38BDF8;">
-                (~ {price_display})
+                (~ {res['price_display']})
             </div>
             <hr style="border: 0.5px solid #334155; margin: 20px 0;">
             <div style="display: flex; justify-content: space-around; font-size: 0.95rem;">
                 <div>
                     <span style="color: #94A3B8;">Fair Buyer Range:</span><br>
-                    <b>Rs. {low_range:,.0f} - {high_range:,.0f}</b>
+                    <b>Rs. {res['fair_range_low']:,.0f} - {res['fair_range_high']:,.0f}</b>
                 </div>
                 <div>
                     <span style="color: #94A3B8;">Instant Dealer Trade-In:</span><br>
-                    <b style="color: #F87171;">Rs. {dealer_cash:,.0f}</b>
+                    <b style="color: #F87171;">Rs. {res['dealer_cash']:,.0f}</b>
                 </div>
             </div>
         </div>
@@ -239,7 +191,7 @@ with col_output:
         st.markdown("#### 🔍 Value Driver Breakdown:")
         col_b1, col_b2 = st.columns(2)
         with col_b1:
-            st.write(f"- 🏆 **PakWheels Rating:** `{score} / 10.0`")
+            st.write(f"- 🏆 **PakWheels Rating:** `{res['inspection_score']} / 10.0`")
             if reg_city == "Islamabad":
                 st.write("- 🟢 **Islamabad Registration:** Premium resale value applied (+3%).")
             elif reg_city == "Karachi":
